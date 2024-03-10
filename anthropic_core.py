@@ -31,7 +31,10 @@ class Dialog:
             start_time = (f"{utils.current_time_info(config, dialog_data[0][2]).split(maxsplit=2)[2]} - "
                           f"it's time to start our conversation")
             self.dialog_history = json.loads(dialog_data[0][1])
-        self.system = f"{self.config.prompts.start}\n{self.config.prompts.hard}\n{start_time}"
+            # Pictures saved in the database may cause problems when working without Vision
+            if not config.vision:
+                self.dialog_history = self.cleaning_images(self.dialog_history)
+        self.system = f"{config.prompts.start}\n{config.prompts.hard}\n{start_time}"
         self.client = anthropic.Anthropic(api_key=config.api_key, base_url=config.base_url)
         self.split_index = 0
 
@@ -58,9 +61,10 @@ class Dialog:
             dialog_buffer.append(reply_msg)
         if photo_base64:
             dialog_buffer.append({"role": "user",
-                                  "content": [{"type": "text", "text": prompt},
-                                              {"type": "image_url", "image_url":
-                                                  {"url": f"data:image/jpeg;base64,{photo_base64}"}}]})
+                                  "content": [
+                                      {"type": "image", "source":
+                                          {"type": "base64", "media_type": 'image/jpeg', "data": photo_base64}},
+                                      {"type": "text", "text": prompt}]})
         else:
             dialog_buffer.append({"role": "user", "content": prompt})
         summarizer_used = False
@@ -80,19 +84,12 @@ class Dialog:
             )
             print(completion)
             answer = completion.content[0].text
-            # completion = self.client.chat.completions.create(
-            #     model=self.config.model,
-            #     messages=dialog_buffer,
-            #     temperature=self.config.temperature,
-            #     max_tokens=self.config.tokens_per_answer,
-            #     stream=False)
-            # answer = completion.choices[0].message.content
         except Exception as e:
             logging.error(f"{e}\n{traceback.format_exc()}")
             return random.choice(self.config.prompts.errors)
 
         total_tokens = completion.usage.input_tokens + completion.usage.output_tokens
-        logging.info(f'{total_tokens} tokens counted by the OpenAI API in chat {chat_name}.')
+        logging.info(f'{total_tokens} tokens counted by the Anthropic API in chat {chat_name}.')
         while self.dialogue_locker is True:
             summarizer_used = True
             logging.info(f"Adding messages is blocked for chat {chat_name} "
@@ -101,16 +98,17 @@ class Dialog:
         if reply_msg:
             self.dialog_history.append(reply_msg)
         if photo_base64:
-            self.dialog_history.extend([{"role": "user",
-                                         "content": [{"type": "text", "text": prompt},
-                                                     {"type": "image_url", "image_url":
-                                                     {"url": f"data:image/jpeg;base64,{photo_base64}"}}]},
-                                        {"role": "assistant", "content": str(answer)}])
+            dialog_buffer.extend([{"role": "user",
+                                   "content": [
+                                       {"type": "image", "source":
+                                           {"type": "base64", "media_type": 'image/jpeg', "data": photo_base64}},
+                                       {"type": "text", "text": prompt}]},
+                                  {"role": "assistant", "content": str(answer)}])
         else:
             self.dialog_history.extend([{"role": "user", "content": prompt},
                                         {"role": "assistant", "content": str(answer)}])
         if self.config.vision and len(self.dialog_history) > 10:
-            self.cleaning_images()
+            self.dialog_history = self.cleaning_images(self.dialog_history, last_only=True)
         if total_tokens >= self.config.summarizer_limit and not summarizer_used:
             logging.info(f"The token limit {self.config.summarizer_limit} for "
                          f"the {chat_name} chat has been exceeded. Using a lazy summarizer")
@@ -127,12 +125,22 @@ class Dialog:
 
     # This code clears the context from old images so that they do not cause problems in operation
     # noinspection PyTypeChecker
-    def cleaning_images(self):
-        for index in range(len(self.dialog_history)-11, -1, -1):
-            if isinstance(self.dialog_history[index]['content'], list):
-                for i in self.dialog_history[index]['content']:
+    @staticmethod
+    def cleaning_images(dialog, last_only=False):
+
+        def cleaner():
+            if isinstance(dialog[index]['content'], list):
+                for i in dialog[index]['content']:
                     if i['type'] == 'text':
-                        self.dialog_history[index]['content'] = i['text']
+                        dialog[index]['content'] = i['text']
+
+        if last_only:
+            for index in range(len(dialog) - 11, -1, -1):
+                cleaner()
+        else:
+            for index in range(len(dialog)):
+                cleaner()
+        return dialog
 
     # noinspection PyTypeChecker
     def summarizer(self, chat_name):
@@ -160,12 +168,7 @@ class Dialog:
             compressed_dialogue.append({"role": "user", "content": last_diary})
 
         # When sending pictures to the summarizer, it does not work correctly, so we delete them
-        for cmp_index in range(len(compressed_dialogue)):
-            if isinstance(compressed_dialogue[cmp_index]['content'], list):
-                for i in compressed_dialogue[cmp_index]['content']:
-                    if i['type'] == 'text':
-                        compressed_dialogue[cmp_index]['content'] = i['text']
-
+        compressed_dialogue = self.cleaning_images(compressed_dialogue)
         compressed_dialogue.append({"role": "user", "content": utils.current_time_info(self.config)})
         original_dialogue = dialogue[split::]
         try:
@@ -178,13 +181,6 @@ class Dialog:
                 system=summarizer_text
             )
             answer = completion.content[0].text
-            # completion = self.client.chat.completions.create(
-            #     model=self.config.model,
-            #     messages=compressed_dialogue,
-            #     temperature=self.config.temperature,
-            #     max_tokens=self.config.tokens_per_answer,
-            #     stream=False)
-            # answer = completion.choices[0].message.content
         except Exception as e:
             logging.error(f"Summarizing failed for chat {chat_name}!")
             logging.error(f"{e}\n{traceback.format_exc()}")

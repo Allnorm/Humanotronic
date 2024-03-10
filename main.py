@@ -76,7 +76,7 @@ async def chatgpt(message: types.Message):
                 reply_msg = {"role": "assistant", "content": reply_text}
             else:
                 reply_msg = {"role": "user", "content": f"{utils.username_parser(message)}: {reply_text}"}
-    logging.info(f"User {utils.username_parser(message)} send a request to ChatGPT")
+    logging.info(f"User {utils.username_parser(message)} send a request to Claude")
     await bot.send_chat_action(chat_id=message.chat.id, action='typing')
     await message.reply(dialogs.get(context).get_answer(message, reply_msg, photo_base64))
 
@@ -86,5 +86,5 @@ async def main() -> None:
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    logging.info("###HUMANOTRONIC v3.2 LAUNCHED SUCCESSFULLY###")
+    logging.info("###HUMANOTRONIC v3.3 LAUNCHED SUCCESSFULLY###")
     asyncio.run(main())
