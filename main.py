@@ -54,10 +54,12 @@ async def chatgpt(message: types.Message):
         try:
             if message.photo:
                 byte_file = await bot.download(message.photo[-1])
+                mime = "image/jpeg"
             else:
                 byte_file = await bot.download(message.sticker.thumbnail)
+                mime = "image/webp"
             # noinspection PyUnresolvedReferences
-            photo_base64 = base64.b64encode(byte_file.getvalue()).decode('utf-8')
+            photo_base64 = {"data": base64.b64encode(byte_file.getvalue()).decode('utf-8'), "mime": mime}
         except Exception as e:
             logging.error(f"{e}\n{traceback.format_exc()}")
             await message.reply(random.choice(config.prompts.errors))
@@ -86,5 +88,5 @@ async def main() -> None:
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    logging.info("###HUMANOTRONIC v3.3.1 LAUNCHED SUCCESSFULLY###")
+    logging.info("###HUMANOTRONIC v3.3.3 LAUNCHED SUCCESSFULLY###")
     asyncio.run(main())

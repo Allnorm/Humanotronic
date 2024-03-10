@@ -26,7 +26,7 @@ class Dialog:
             logging.error(f"{e}\n{traceback.format_exc()}")
         if not dialog_data:
             start_time = f"{utils.current_time_info(config).split(maxsplit=2)[2]} - it's time to start our conversation"
-            self.dialog_history = []
+            self.dialog_history = [{"role": "assistant", "content": "new"}]
         else:
             start_time = (f"{utils.current_time_info(config, dialog_data[0][2]).split(maxsplit=2)[2]} - "
                           f"it's time to start our conversation")
@@ -36,7 +36,6 @@ class Dialog:
                 self.dialog_history = self.cleaning_images(self.dialog_history)
         self.system = f"{config.prompts.start}\n{config.prompts.hard}\n{start_time}"
         self.client = anthropic.Anthropic(api_key=config.api_key, base_url=config.base_url)
-        self.split_index = 0
 
     def get_answer(self, message, reply_msg, photo_base64):
         chat_name = utils.username_parser(message) if message.chat.title is None else message.chat.title
@@ -56,15 +55,14 @@ class Dialog:
             prompt += f"{utils.current_time_info(self.config)} "
             logging.info(f"Time updated for dialogue in chat {chat_name}")
         prompt += f"{utils.username_parser(message)}: {msg_txt}"
-        dialog_buffer = self.dialog_history.copy()
+        dialog_buffer = self.dialog_history.copy()[1::]
         if reply_msg:
             dialog_buffer.append(reply_msg)
         if photo_base64:
-            dialog_buffer.append({"role": "user",
-                                  "content": [
-                                      {"type": "image", "source":
-                                          {"type": "base64", "media_type": 'image/jpeg', "data": photo_base64}},
-                                      {"type": "text", "text": prompt}]})
+            dialog_buffer.append({"role": "user", "content": [
+                {"type": "image", "source":
+                    {"type": "base64", "media_type": photo_base64['mime'], "data": photo_base64['data']}},
+                {"type": "text", "text": prompt}]})
         else:
             dialog_buffer.append({"role": "user", "content": prompt})
         summarizer_used = False
@@ -75,7 +73,7 @@ class Dialog:
             time.sleep(5)
         try:
             completion = self.client.messages.create(
-                model="claude-3-opus-20240229",
+                model=self.config.model,
                 messages=dialog_buffer,
                 temperature=self.config.temperature,
                 max_tokens=self.config.tokens_per_answer,
@@ -98,9 +96,9 @@ class Dialog:
             self.dialog_history.append(reply_msg)
         if photo_base64:
             self.dialog_history.extend([{"role": "user", "content": [
-                                             {"type": "image", "source":
-                                                 {"type": "base64", "media_type": 'image/jpeg', "data": photo_base64}},
-                                             {"type": "text", "text": prompt}]},
+                {"type": "image", "source":
+                    {"type": "base64", "media_type": photo_base64['mime'], "data": photo_base64['data']}},
+                {"type": "text", "text": prompt}]},
                                         {"role": "assistant", "content": str(answer)}])
         else:
             self.dialog_history.extend([{"role": "user", "content": prompt},
@@ -111,11 +109,8 @@ class Dialog:
             logging.info(f"The token limit {self.config.summarizer_limit} for "
                          f"the {chat_name} chat has been exceeded. Using a lazy summarizer")
             threading.Thread(target=self.summarizer, args=(chat_name,)).start()
-            summarizer_used = True
         try:
             self.sql_helper.dialog_update(self.context, json.dumps(self.dialog_history))
-            if all([not summarizer_used, self.split_index == 0, total_tokens >= self.config.summarizer_limit * 0.7]):
-                self.split_index = len(self.dialog_history)
         except Exception as e:
             logging.error("Humanotronic was unable to save conversation information! Please check your database!")
             logging.error(f"{e}\n{traceback.format_exc()}")
@@ -140,43 +135,59 @@ class Dialog:
                 cleaner()
         return dialog
 
+    def summarizer_index(self, dialogue, threshold=None):
+        text_len = 0
+        for index in range(len(dialogue)):
+            if isinstance(dialogue[index]['content'], list):
+                for i in dialogue[index]['content']:
+                    if i['type'] == 'text':
+                        text_len += len(i['text'])
+            else:
+                text_len += len(dialogue[index]['content'])
+
+            if threshold:
+                if text_len >= threshold and dialogue[index]['role'] == "user":
+                    return index
+
+        return self.summarizer_index(dialogue, text_len * 0.7)
+
     # noinspection PyTypeChecker
     def summarizer(self, chat_name):
         self.dialogue_locker = True
-        if self.dialog_history[0]['role'] == 'assistant':
+        if self.dialog_history[0]['content'] == 'brief':
             # The dialogue cannot begin with the words of the assistant, which means it was a diary entry
-            last_diary = self.dialog_history[0]['content']
-            dialogue = self.dialog_history[1::]
+            last_diary = self.dialog_history[1]['content']
+            dialogue = self.dialog_history[2::]
         else:
             last_diary = None
-            dialogue = self.dialog_history
+            dialogue = self.dialog_history[1::]
 
         summarizer_text = self.config.prompts.summarizer
         if last_diary is not None:
             summarizer_text += f"\n{self.config.prompts.summarizer_last}"
         summarizer_text = summarizer_text.format(self.config.memory_dump_size)
 
-        split = self.split_index if self.split_index != 0 else len(self.dialog_history)
+        split = self.summarizer_index(dialogue)
 
+        compressed_dialogue = dialogue[:split:]
         if last_diary is None:
-            compressed_dialogue = [{'role': 'assistant', "content": self.system}]
-            compressed_dialogue.extend(dialogue[:split:])
+            compressed_dialogue.append({"role": "user", "content": f'{summarizer_text}\n{self.system}'
+                                                                   f'\n{utils.current_time_info(self.config)}'})
         else:
-            compressed_dialogue = dialogue[:split:]
-            compressed_dialogue.append({"role": "user", "content": last_diary})
+            compressed_dialogue.append({"role": "user",
+                                        "content": f'{summarizer_text}\n{last_diary}'
+                                                   f'\n{utils.current_time_info(self.config)}'})
 
         # When sending pictures to the summarizer, it does not work correctly, so we delete them
         compressed_dialogue = self.cleaning_images(compressed_dialogue)
-        compressed_dialogue.append({"role": "user", "content": utils.current_time_info(self.config)})
         original_dialogue = dialogue[split::]
         try:
             completion = self.client.messages.create(
-                model="claude-3-opus-20240229",
+                model=self.config.model,
                 messages=compressed_dialogue,
                 temperature=self.config.temperature,
                 max_tokens=self.config.tokens_per_answer,
                 stream=False,
-                system=summarizer_text
             )
             answer = completion.content[0].text
         except Exception as e:
@@ -185,10 +196,12 @@ class Dialog:
             self.dialogue_locker = False
             return
 
-        logging.info(f"Summarizing completed for chat {chat_name}, {completion.usage.total_tokens} tokens were used")
-        result = [{"role": "assistant", "content": answer}]
+        logging.info(f"Summarizing completed for chat {chat_name}, "
+                     f"{completion.usage.input_tokens + completion.usage.output_tokens} tokens were used")
+        result = [{"role": "assistant", "content": "brief"},
+                  {"role": "user", "content": f'{answer}\n{utils.current_time_info(self.config)}'},
+                  compressed_dialogue[-2]]
         result.extend(original_dialogue)
-        result.append({"role": "user", "content": utils.current_time_info(self.config)})
         self.dialog_history = result
         try:
             self.sql_helper.dialog_update(self.context, json.dumps(self.dialog_history))
