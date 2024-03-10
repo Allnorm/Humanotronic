@@ -157,7 +157,8 @@ class Dialog:
         if self.dialog_history[0]['content'] == 'brief':
             # The dialogue cannot begin with the words of the assistant, which means it was a diary entry
             last_diary = self.dialog_history[1]['content']
-            dialogue = self.dialog_history[2::]
+            dialogue = [{"role": "user", "content": "Dialogue is started"}]
+            dialogue.extend(self.dialog_history[2::])
         else:
             last_diary = None
             dialogue = self.dialog_history[1::]
