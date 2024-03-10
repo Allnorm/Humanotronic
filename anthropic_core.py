@@ -82,7 +82,6 @@ class Dialog:
                 stream=False,
                 system=self.system
             )
-            print(completion)
             answer = completion.content[0].text
         except Exception as e:
             logging.error(f"{e}\n{traceback.format_exc()}")
