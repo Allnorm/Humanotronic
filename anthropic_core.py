@@ -97,12 +97,11 @@ class Dialog:
         if reply_msg:
             self.dialog_history.append(reply_msg)
         if photo_base64:
-            dialog_buffer.extend([{"role": "user",
-                                   "content": [
-                                       {"type": "image", "source":
-                                           {"type": "base64", "media_type": 'image/jpeg', "data": photo_base64}},
-                                       {"type": "text", "text": prompt}]},
-                                  {"role": "assistant", "content": str(answer)}])
+            self.dialog_history.extend([{"role": "user", "content": [
+                                             {"type": "image", "source":
+                                                 {"type": "base64", "media_type": 'image/jpeg', "data": photo_base64}},
+                                             {"type": "text", "text": prompt}]},
+                                        {"role": "assistant", "content": str(answer)}])
         else:
             self.dialog_history.extend([{"role": "user", "content": prompt},
                                         {"role": "assistant", "content": str(answer)}])
