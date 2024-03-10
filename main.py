@@ -8,7 +8,7 @@ import traceback
 from aiogram import types, Bot, Dispatcher
 from aiogram.filters.command import Command
 
-import openai_core
+import anthropic_core
 import sql_worker
 import utils
 
@@ -65,7 +65,7 @@ async def chatgpt(message: types.Message):
 
     context = message.chat.id if not config.unified_context else 0
     if dialogs.get(context) is None:
-        dialogs.update({context: openai_core.Dialog(config, sql_helper, context)})
+        dialogs.update({context: anthropic_core.Dialog(config, sql_helper, context)})
     if is_flooded(message):
         return
     reply_msg = None
@@ -86,5 +86,5 @@ async def main() -> None:
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    logging.info("###HUMANOTRONIC v3.1.2 LAUNCHED SUCCESSFULLY###")
+    logging.info("###HUMANOTRONIC v3.2 LAUNCHED SUCCESSFULLY###")
     asyncio.run(main())
