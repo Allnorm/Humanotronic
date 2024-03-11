@@ -80,6 +80,9 @@ class Dialog:
                 stream=False,
                 system=self.system
             )
+            if "error" in completion.id:
+                logging.error(completion.content[0].text)
+                raise ConnectionResetError
             answer = completion.content[0].text
         except Exception as e:
             logging.error(f"{e}\n{traceback.format_exc()}")
@@ -190,6 +193,9 @@ class Dialog:
                 max_tokens=self.config.tokens_per_answer,
                 stream=False,
             )
+            if "error" in completion.id:
+                logging.error(completion.content[0].text)
+                raise ConnectionResetError
             answer = completion.content[0].text
         except Exception as e:
             logging.error(f"Summarizing failed for chat {chat_name}!")
