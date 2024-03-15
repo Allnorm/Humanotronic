@@ -74,7 +74,9 @@ class Dialog:
                     max_tokens=max_tokens,
                     system=system
             ) as stream:
+                empty_stream = True
                 for event in stream:
+                    empty_stream = False
                     name = event.__class__.__name__
                     if name == "MessageStartEvent":
                         tokens_count += event.message.usage.input_tokens
@@ -85,6 +87,8 @@ class Dialog:
                     elif name == "Error":
                         logging.error(event.error.message)
                         raise ApiRequestException
+                if empty_stream:
+                    raise ApiRequestException("Empty stream object, please check your proxy connection!")
             return text, tokens_count
         except Exception as e:
             logging.error(f"{e}\n{traceback.format_exc()}")
