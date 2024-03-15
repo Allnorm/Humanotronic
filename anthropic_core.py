@@ -11,6 +11,10 @@ import anthropic
 import utils
 
 
+class ApiRequestException(Exception):
+    pass
+
+
 class Dialog:
 
     def __init__(self, config, sql_helper, context):
@@ -36,6 +40,55 @@ class Dialog:
                 self.dialog_history = self.cleaning_images(self.dialog_history)
         self.system = f"{config.prompts.start}\n{config.prompts.hard}\n{start_time}"
         self.client = anthropic.Anthropic(api_key=config.api_key, base_url=config.base_url)
+
+    def send_api_request(self, model, messages,
+                         max_tokens=1000,
+                         system=None,
+                         temperature=None,
+                         stream=False):
+        if not stream:
+            try:
+                completion = self.client.messages.create(
+                    model=model,
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    stream=False,
+                    system=system
+                )
+                if "error" in completion.id:
+                    logging.error(completion.content[0].text)
+                    raise ApiRequestException
+                return completion.content[0].text, completion.usage.input_tokens + completion.usage.output_tokens
+            except Exception as e:
+                logging.error(f"{e}\n{traceback.format_exc()}")
+                raise ApiRequestException
+
+        try:
+            tokens_count = 0
+            text = ""
+            with self.client.messages.stream(
+                    model=model,
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    system=system
+            ) as stream:
+                for event in stream:
+                    name = event.__class__.__name__
+                    if name == "MessageStartEvent":
+                        tokens_count += event.message.usage.input_tokens
+                    elif name == "ContentBlockDeltaEvent":
+                        text += event.delta.text
+                    elif name == "MessageDeltaEvent":
+                        tokens_count += event.usage.output_tokens
+                    elif name == "Error":
+                        logging.error(event.error.message)
+                        raise ApiRequestException
+            return text, tokens_count
+        except Exception as e:
+            logging.error(f"{e}\n{traceback.format_exc()}")
+            raise ApiRequestException
 
     def get_answer(self, message, reply_msg, photo_base64):
         chat_name = utils.username_parser(message) if message.chat.title is None else message.chat.title
@@ -72,23 +125,14 @@ class Dialog:
                          f"due to the work of the summarizer. Retry after 5s.")
             time.sleep(5)
         try:
-            completion = self.client.messages.create(
-                model=self.config.model,
-                messages=dialog_buffer,
-                temperature=self.config.temperature,
-                max_tokens=self.config.tokens_per_answer,
-                stream=False,
-                system=self.system
-            )
-            if "error" in completion.id:
-                logging.error(completion.content[0].text)
-                raise ConnectionResetError
-            answer = completion.content[0].text
-        except Exception as e:
-            logging.error(f"{e}\n{traceback.format_exc()}")
+            answer, total_tokens = self.send_api_request(self.config.model,
+                                                         dialog_buffer,
+                                                         self.config.tokens_per_answer,
+                                                         self.system,
+                                                         self.config.temperature,
+                                                         self.config.stream_mode)
+        except ApiRequestException:
             return random.choice(self.config.prompts.errors)
-
-        total_tokens = completion.usage.input_tokens + completion.usage.output_tokens
         logging.info(f'{total_tokens} tokens counted by the Anthropic API in chat {chat_name}.')
         while self.dialogue_locker is True:
             summarizer_used = True
@@ -186,25 +230,18 @@ class Dialog:
         compressed_dialogue = self.cleaning_images(compressed_dialogue)
         original_dialogue = dialogue[split::]
         try:
-            completion = self.client.messages.create(
-                model=self.config.model,
-                messages=compressed_dialogue,
-                temperature=self.config.temperature,
-                max_tokens=self.config.tokens_per_answer,
-                stream=False,
-            )
-            if "error" in completion.id:
-                logging.error(completion.content[0].text)
-                raise ConnectionResetError
-            answer = completion.content[0].text
-        except Exception as e:
+            answer, total_tokens = self.send_api_request(self.config.model,
+                                                         compressed_dialogue,
+                                                         self.config.tokens_per_answer, None,
+                                                         self.config.temperature,
+                                                         self.config.stream_mode)
+        except ApiRequestException:
             logging.error(f"Summarizing failed for chat {chat_name}!")
-            logging.error(f"{e}\n{traceback.format_exc()}")
             self.dialogue_locker = False
             return
 
         logging.info(f"Summarizing completed for chat {chat_name}, "
-                     f"{completion.usage.input_tokens + completion.usage.output_tokens} tokens were used")
+                     f"{total_tokens} tokens were used")
         result = [{"role": "assistant", "content": "brief"},
                   {"role": "user", "content": f'{answer}\n{utils.current_time_info(self.config)}'},
                   compressed_dialogue[-2]]

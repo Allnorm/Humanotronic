@@ -71,6 +71,7 @@ class ConfigData:
                 self.tokens_per_answer = int(config["ChatGPT"]["tokens-per-answer"])
                 self.memory_dump_size = int(config["ChatGPT"]["memory-dump-size"])
                 self.vision = self.bool_init(config["ChatGPT"]["vision"])
+                self.stream_mode = self.bool_init(config["ChatGPT"]["stream-mode"])
                 break
             except Exception as e:
                 logging.error((str(e)))
@@ -117,6 +118,7 @@ class ConfigData:
         config.set("ChatGPT", "model", model)
         config.set("ChatGPT", "temperature", "0.5")
         config.set("ChatGPT", "timezone", "0")
+        config.set("ChatGPT", "stream-mode", "false")
         if "gpt-4" in model or "16k" in model or "32k" in model:
             config.set("ChatGPT", "summarizer-limit", "6000")
             config.set("ChatGPT", "tokens-per-answer", "2000")
