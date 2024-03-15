@@ -46,6 +46,14 @@ class Dialog:
                          system=None,
                          temperature=None,
                          stream=False):
+
+        msg = []
+        if system:
+            msg = [{'role': 'user', "content": "Dialogue is started"}, {'role': 'assistant', "content": system}]
+        msg.extend(messages)
+        messages = msg
+        messages.append({"role": "assistant",
+                         "content": self.config.prompts.prefill})
         if not stream:
             try:
                 completion = self.client.messages.create(
@@ -54,7 +62,6 @@ class Dialog:
                     temperature=temperature,
                     max_tokens=max_tokens,
                     stream=False,
-                    system=system
                 )
                 if "error" in completion.id:
                     logging.error(completion.content[0].text)
@@ -72,14 +79,17 @@ class Dialog:
                     messages=messages,
                     temperature=temperature,
                     max_tokens=max_tokens,
-                    system=system
             ) as stream:
                 empty_stream = True
+                error = False
                 for event in stream:
                     empty_stream = False
                     name = event.__class__.__name__
                     if name == "MessageStartEvent":
-                        tokens_count += event.message.usage.input_tokens
+                        if event.message.usage:
+                            tokens_count += event.message.usage.input_tokens
+                        else:
+                            error = True
                     elif name == "ContentBlockDeltaEvent":
                         text += event.delta.text
                     elif name == "MessageDeltaEvent":
@@ -89,6 +99,10 @@ class Dialog:
                         raise ApiRequestException
                 if empty_stream:
                     raise ApiRequestException("Empty stream object, please check your proxy connection!")
+                if error:
+                    raise ApiRequestException(text)
+                if not text:
+                    raise ApiRequestException("Empty text result, please check your prefill!")
             return text, tokens_count
         except Exception as e:
             logging.error(f"{e}\n{traceback.format_exc()}")
@@ -105,9 +119,6 @@ class Dialog:
             msg_txt = "I sent a photo"
 
         prompt = ""
-        if random.randint(1, 50) == 1:
-            prompt += f"{self.config.prompts.prefill} "
-            logging.info(f"Prompt reminded for dialogue in chat {chat_name}")
         if random.randint(1, 30) == 1 or "врем" in msg_txt.lower() or "час" in msg_txt.lower():
             prompt += f"{utils.current_time_info(self.config)} "
             logging.info(f"Time updated for dialogue in chat {chat_name}")
