@@ -22,6 +22,7 @@ class Dialog:
         self.config = config
         self.sql_helper = sql_helper
         self.context = context
+        self.last_time = 0
         try:
             dialog_data = sql_helper.dialog_get(context)
         except Exception as e:
@@ -119,7 +120,11 @@ class Dialog:
             msg_txt = "I sent a photo"
 
         prompt = ""
-        if random.randint(1, 30) == 1 or "врем" in msg_txt.lower() or "час" in msg_txt.lower():
+        if any([random.randint(1, 30) == 1,  # Time is reminded of Humanotronic with a probability of 1/30
+                int(time.time()) - self.last_time >= 3600,
+                "врем" in msg_txt.lower(),
+                "час" in msg_txt.lower()
+                ]):
             prompt += f"{utils.current_time_info(self.config)} "
             logging.info(f"Time updated for dialogue in chat {chat_name}")
         prompt += f"{utils.username_parser(message)}: {msg_txt}"
@@ -176,6 +181,7 @@ class Dialog:
         except Exception as e:
             logging.error("Humanotronic was unable to save conversation information! Please check your database!")
             logging.error(f"{e}\n{traceback.format_exc()}")
+        self.last_time = int(time.time())
         return answer
 
     # This code clears the context from old images so that they do not cause problems in operation
