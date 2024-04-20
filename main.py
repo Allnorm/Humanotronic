@@ -82,12 +82,11 @@ async def chatgpt(message: types.Message):
     await bot.send_chat_action(chat_id=message.chat.id, action='typing')
     answer = (await dialogs.get(context).get_answer(message, reply_msg, photo_base64)).split("\n\n")
     await message.reply(answer[0], allow_sending_without_reply=True)
-    thread_id = message.message_thread_id if message.is_topic_message else None
     for paragraph in answer[1::]:
         await asyncio.sleep(5)
         await bot.send_chat_action(chat_id=message.chat.id, action='typing')
         await asyncio.sleep(5)
-        await bot.send_message(message.chat.id, paragraph, thread_id)
+        await bot.send_message(message.chat.id, paragraph, message.message_thread_id)
 
 
 async def main() -> None:
@@ -95,5 +94,5 @@ async def main() -> None:
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    logging.info("###HUMANOTRONIC v3.4.2 (Anthropic) LAUNCHED SUCCESSFULLY###")
+    logging.info("###HUMANOTRONIC v3.5.1 (Anthropic) LAUNCHED SUCCESSFULLY###")
     asyncio.run(main())

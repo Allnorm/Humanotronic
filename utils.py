@@ -1,3 +1,4 @@
+from threading import BoundedSemaphore
 import base64
 import configparser
 import importlib
@@ -17,6 +18,7 @@ from aiogram import types
 class ConfigData:
     path = ""
     my_id = ""
+    api_queue: BoundedSemaphore
 
     def __init__(self):
 
@@ -72,6 +74,8 @@ class ConfigData:
                 self.memory_dump_size = int(config["ChatGPT"]["memory-dump-size"])
                 self.vision = self.bool_init(config["ChatGPT"]["vision"])
                 self.stream_mode = self.bool_init(config["ChatGPT"]["stream-mode"])
+                self.attempts = int(config["ChatGPT"]["gen-attempts"])
+                queue_size = int(config["ChatGPT"]["queue-size"])
                 break
             except Exception as e:
                 logging.error((str(e)))
@@ -100,6 +104,15 @@ class ConfigData:
         except (KeyError, TypeError, ValueError):
             self.temperature = None
 
+        if self.attempts <= 0:
+            logging.warning('''Value "gen-attempts" can't be less than or equal to 0, set to default (3)''')
+            self.attempts = 3
+
+        if queue_size <= 0:
+            logging.warning('''Value "queue-size" can't be less than or equal to 0, set to default (3)''')
+            queue_size = 3
+        self.api_queue = BoundedSemaphore(queue_size)
+
     def remake_conf(self):
         token, api_key, model = "", "", ""
         while token == "":
@@ -119,6 +132,8 @@ class ConfigData:
         config.set("ChatGPT", "temperature", "0.5")
         config.set("ChatGPT", "timezone", "0")
         config.set("ChatGPT", "stream-mode", "false")
+        config.set("ChatGPT", "gen-attempts", "3")
+        config.set("ChatGPT", "queue-size", "3")
         if "gpt-4" in model or "16k" in model or "32k" in model:
             config.set("ChatGPT", "summarizer-limit", "6000")
             config.set("ChatGPT", "tokens-per-answer", "2000")
