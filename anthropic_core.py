@@ -46,7 +46,8 @@ class Dialog:
                          max_tokens=1000,
                          system=None,
                          temperature=None,
-                         stream=False):
+                         stream=False,
+                         attempts=3):
 
         msg = []
         if system:
@@ -55,59 +56,63 @@ class Dialog:
         messages = msg
         messages.append({"role": "assistant",
                          "content": self.config.prompts.prefill})
-        if not stream:
+
+        for _ in range(attempts):
+            if not stream:
+                try:
+                    completion = self.client.messages.create(
+                        model=model,
+                        messages=messages,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        stream=False,
+                    )
+                    if "error" in completion.id:
+                        logging.error(completion.content[0].text)
+                        raise ApiRequestException
+                    return completion.content[0].text, completion.usage.input_tokens + completion.usage.output_tokens
+                except Exception as e:
+                    logging.error(f"{e}\n{traceback.format_exc()}")
+                    continue
+
             try:
-                completion = self.client.messages.create(
-                    model=model,
-                    messages=messages,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    stream=False,
-                )
-                if "error" in completion.id:
-                    logging.error(completion.content[0].text)
-                    raise ApiRequestException
-                return completion.content[0].text, completion.usage.input_tokens + completion.usage.output_tokens
+                tokens_count = 0
+                text = ""
+                with self.client.messages.stream(
+                        model=model,
+                        messages=messages,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                ) as stream:
+                    empty_stream = True
+                    error = False
+                    for event in stream:
+                        empty_stream = False
+                        name = event.__class__.__name__
+                        if name == "MessageStartEvent":
+                            if event.message.usage:
+                                tokens_count += event.message.usage.input_tokens
+                            else:
+                                error = True
+                        elif name == "ContentBlockDeltaEvent":
+                            text += event.delta.text
+                        elif name == "MessageDeltaEvent":
+                            tokens_count += event.usage.output_tokens
+                        elif name == "Error":
+                            logging.error(event.error.message)
+                            raise ApiRequestException
+                    if empty_stream:
+                        raise ApiRequestException("Empty stream object, please check your proxy connection!")
+                    if error:
+                        raise ApiRequestException(text)
+                    if not text:
+                        raise ApiRequestException("Empty text result, please check your prefill!")
+                return text, tokens_count
             except Exception as e:
                 logging.error(f"{e}\n{traceback.format_exc()}")
-                raise ApiRequestException
+                continue
 
-        try:
-            tokens_count = 0
-            text = ""
-            with self.client.messages.stream(
-                    model=model,
-                    messages=messages,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-            ) as stream:
-                empty_stream = True
-                error = False
-                for event in stream:
-                    empty_stream = False
-                    name = event.__class__.__name__
-                    if name == "MessageStartEvent":
-                        if event.message.usage:
-                            tokens_count += event.message.usage.input_tokens
-                        else:
-                            error = True
-                    elif name == "ContentBlockDeltaEvent":
-                        text += event.delta.text
-                    elif name == "MessageDeltaEvent":
-                        tokens_count += event.usage.output_tokens
-                    elif name == "Error":
-                        logging.error(event.error.message)
-                        raise ApiRequestException
-                if empty_stream:
-                    raise ApiRequestException("Empty stream object, please check your proxy connection!")
-                if error:
-                    raise ApiRequestException(text)
-                if not text:
-                    raise ApiRequestException("Empty text result, please check your prefill!")
-            return text, tokens_count
-        except Exception as e:
-            logging.error(f"{e}\n{traceback.format_exc()}")
-            raise ApiRequestException
+        raise ApiRequestException
 
     async def get_answer(self, message, reply_msg, photo_base64):
         chat_name = utils.username_parser(message) if message.chat.title is None else message.chat.title
@@ -130,7 +135,7 @@ class Dialog:
         prompt += f"{utils.username_parser(message)}: {msg_txt}"
         dialog_buffer = self.dialog_history.copy()[1::]
         if reply_msg:
-            dialog_buffer.append(reply_msg)
+            prompt = f"В ответ на сообщение {reply_msg['content']}:\n{prompt}"
         if photo_base64:
             dialog_buffer.append({"role": "user", "content": [
                 {"type": "image", "source":
@@ -161,8 +166,6 @@ class Dialog:
             summarizer_used = True
             await self.dialogue_locker.acquire()
             self.dialogue_locker.release()
-        if reply_msg:
-            self.dialog_history.append(reply_msg)
         if photo_base64:
             self.dialog_history.extend([{"role": "user", "content": [
                 {"type": "image", "source":
