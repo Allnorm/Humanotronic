@@ -144,7 +144,7 @@ class Dialog:
         prompt += f"{utils.username_parser(message)}: {msg_txt}"
         dialog_buffer = self.dialog_history.copy()[1::]
         if reply_msg:
-            content = reply_msg['content']
+            content = reply_msg['content']  # python 3.11 and older
             prompt = f'В ответ на сообщение "{content}":\n{prompt}'
         if photo_base64:
             dialog_buffer.append({"role": "user", "content": [
