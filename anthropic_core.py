@@ -57,6 +57,7 @@ class Dialog:
         messages.append({"role": "assistant",
                          "content": self.config.prompts.prefill})
 
+        self.config.api_queue.acquire()
         for _ in range(attempts):
             if not stream:
                 try:
@@ -70,7 +71,11 @@ class Dialog:
                     if "error" in completion.id:
                         logging.error(completion.content[0].text)
                         raise ApiRequestException
-                    return completion.content[0].text, completion.usage.input_tokens + completion.usage.output_tokens
+                    text = completion.content[0].text
+                    while text[0] in (" ", "\n"):  # Sometimes Anthropic spits out spaces and line breaks
+                        text = text[1::]  # at the beginning of text
+                    self.config.api_queue.release()
+                    return text, completion.usage.input_tokens + completion.usage.output_tokens
                 except Exception as e:
                     logging.error(f"{e}\n{traceback.format_exc()}")
                     continue
@@ -107,11 +112,15 @@ class Dialog:
                         raise ApiRequestException(text)
                     if not text:
                         raise ApiRequestException("Empty text result, please check your prefill!")
+                while text[0] in (" ", "\n"):
+                    text = text[1::]
+                self.config.api_queue.release()
                 return text, tokens_count
             except Exception as e:
                 logging.error(f"{e}\n{traceback.format_exc()}")
                 continue
 
+        self.config.api_queue.release()
         raise ApiRequestException
 
     async def get_answer(self, message, reply_msg, photo_base64):
@@ -155,7 +164,8 @@ class Dialog:
                     self.config.tokens_per_answer,
                     self.system,
                     self.config.temperature,
-                    self.config.stream_mode]
+                    self.config.stream_mode,
+                    self.config.attempts]
             answer, total_tokens = await asyncio.get_running_loop().run_in_executor(
                 None, self.send_api_request, *args)
         except ApiRequestException:
@@ -260,7 +270,8 @@ class Dialog:
                     compressed_dialogue,
                     self.config.tokens_per_answer, None,
                     self.config.temperature,
-                    self.config.stream_mode]
+                    self.config.stream_mode,
+                    self.config.attempts]
             answer, total_tokens = await asyncio.get_running_loop().run_in_executor(
                 None, self.send_api_request, *args)
         except ApiRequestException:
