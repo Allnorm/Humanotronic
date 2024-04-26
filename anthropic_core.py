@@ -47,15 +47,11 @@ class Dialog:
                          system=None,
                          temperature=None,
                          stream=False,
+                         prefill=None,
                          attempts=3):
 
-        msg = []
-        if system:
-            msg = [{'role': 'user', "content": "Dialogue is started"}, {'role': 'assistant', "content": system}]
-        msg.extend(messages)
-        messages = msg
-        messages.append({"role": "assistant",
-                         "content": self.config.prompts.prefill})
+        if prefill:
+            messages.append({"role": "assistant", "content": prefill})
 
         self.config.api_queue.acquire()
         for _ in range(attempts):
@@ -66,6 +62,7 @@ class Dialog:
                         messages=messages,
                         temperature=temperature,
                         max_tokens=max_tokens,
+                        system=system,
                         stream=False,
                     )
                     if "error" in completion.id:
@@ -88,6 +85,7 @@ class Dialog:
                         messages=messages,
                         temperature=temperature,
                         max_tokens=max_tokens,
+                        system=system,
                 ) as stream:
                     empty_stream = True
                     error = False
@@ -166,6 +164,7 @@ class Dialog:
                     self.system,
                     self.config.temperature,
                     self.config.stream_mode,
+                    self.config.prompts.prefill,
                     self.config.attempts]
             answer, total_tokens = await asyncio.get_running_loop().run_in_executor(
                 None, self.send_api_request, *args)
@@ -271,7 +270,7 @@ class Dialog:
                     compressed_dialogue,
                     self.config.tokens_per_answer, None,
                     self.config.temperature,
-                    self.config.stream_mode,
+                    self.config.stream_mode, None,
                     self.config.attempts]
             answer, total_tokens = await asyncio.get_running_loop().run_in_executor(
                 None, self.send_api_request, *args)
